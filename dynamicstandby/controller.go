@@ -61,8 +61,10 @@ func (r *DynamicStandbyReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 	}
 
+	// check if a new target standby is needed
 	isNewTargetStandby, newTargetStandby := checkForNewTargetStandby(&gsb, &cfm)
 
+	// update the target standby if needed
 	if isNewTargetStandby {
 		gsb.Spec.StandingBy = newTargetStandby
 		r.Update(ctx, &gsb)
