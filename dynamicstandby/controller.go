@@ -61,6 +61,8 @@ func (r *DynamicStandbyReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 	}
 
+	isNewTargetStandby, newTargetStandby := checkForNewTargetStandby(&gsb, &cfm)
+
 	return ctrl.Result{}, nil
 }
 
@@ -102,11 +104,11 @@ func (r *DynamicStandbyReconciler) createConfigMap(ctx context.Context, gsb *mps
 			},
 		},
 		Data: map[string]string{
-			"BuildID":            gsb.Spec.BuildID,
-			"ActiveServers":      strconv.Itoa(gsb.Status.CurrentActive),
-			"ActualStandBy":      strconv.Itoa(gsb.Status.CurrentStandingBy),
-			"TargetStandByFloor": strconv.Itoa(gsb.Spec.StandingBy),
-			"TargetStandBy":      strconv.Itoa(gsb.Spec.StandingBy),
+			"BuildID": gsb.Spec.BuildID,
+			//"ActiveServers":      strconv.Itoa(gsb.Status.CurrentActive),
+			//"ActualStandBy":      strconv.Itoa(gsb.Status.CurrentStandingBy),
+			"TargetStandbyFloor": strconv.Itoa(gsb.Spec.StandingBy),
+			"TargetStandby":      strconv.Itoa(gsb.Spec.StandingBy),
 		},
 	}
 
@@ -115,4 +117,23 @@ func (r *DynamicStandbyReconciler) createConfigMap(ctx context.Context, gsb *mps
 	}
 
 	return &cfm, nil
+}
+
+func checkForNewTargetStandby(gsb *mpsv1alpha1.GameServerBuild, cfm *corev1.ConfigMap) (bool, int) {
+	activeServers := gsb.Status.CurrentActive
+	activeStandby := gsb.Status.CurrentStandingBy
+	targetStandby := gsb.Spec.StandingBy
+	targetStandbyFloor, _ := strconv.Atoi(cfm.Data["TargetStandbyFloor"])
+
+	if activeServers > targetStandby && (float64(activeStandby/targetStandbyFloor) < 0.5) {
+		return true, int(1.5 * float64(targetStandby))
+	}
+	if activeServers > targetStandby && (float64(activeStandby/targetStandbyFloor) < 0.25) {
+		return true, 3 * targetStandby
+	}
+	if activeServers > targetStandby && (float64(activeStandby/targetStandbyFloor) < 0.005) {
+		return true, 4 * targetStandby
+	}
+
+	return false, 0
 }
