@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -101,7 +102,11 @@ func (r *DynamicStandbyReconciler) createConfigMap(ctx context.Context, gsb *mps
 			},
 		},
 		Data: map[string]string{
-			"BuildID": gsb.Spec.BuildID,
+			"BuildID":            gsb.Spec.BuildID,
+			"ActiveServers":      strconv.Itoa(gsb.Status.CurrentActive),
+			"ActualStandBy":      strconv.Itoa(gsb.Status.CurrentStandingBy),
+			"TargetStandByFloor": strconv.Itoa(gsb.Spec.StandingBy),
+			"TargetStandBy":      strconv.Itoa(gsb.Spec.StandingBy),
 		},
 	}
 
