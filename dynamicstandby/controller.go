@@ -63,6 +63,13 @@ func (r *DynamicStandbyReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	isNewTargetStandby, newTargetStandby := checkForNewTargetStandby(&gsb, &cfm)
 
+	if isNewTargetStandby {
+		gsb.Spec.StandingBy = newTargetStandby
+		r.Update(ctx, &gsb)
+	}
+
+	// TODO: add cooldown period between consecutive updates
+
 	return ctrl.Result{}, nil
 }
 
