@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"strconv"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -21,14 +23,29 @@ var (
 	apiGVStr = mpsv1alpha1.GroupVersion.String()
 )
 
+const (
+	cooldown = time.Second * 10
+)
+
 type DynamicStandbyReconciler struct {
 	client.Client
 	Scheme   *k8sruntime.Scheme
 	Recorder record.EventRecorder
+	PrevTime time.Time
 }
 
 func (r *DynamicStandbyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
+
+	currTime := time.Now()
+
+	if !r.PrevTime.IsZero() {
+		limit := r.PrevTime.Add(cooldown)
+		if currTime.After(r.PrevTime) && currTime.Before(limit) {
+			log.Info("Minimum last run threshold since last change not met")
+			return ctrl.Result{}, nil
+		}
+	}
 
 	var gsb mpsv1alpha1.GameServerBuild
 	if err := r.Get(ctx, req.NamespacedName, &gsb); err != nil {
@@ -39,8 +56,6 @@ func (r *DynamicStandbyReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		log.Error(err, "unable to fetch GameServerBuild")
 		return ctrl.Result{}, nil
 	}
-
-	// TODO: add logic for dynamic standby
 
 	// check if correspoding configmap exists
 	var cfm corev1.ConfigMap
@@ -57,6 +72,24 @@ func (r *DynamicStandbyReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		} else {
 			log.Error(err, "unable to get configmap")
 			return ctrl.Result{}, err
+		}
+	}
+
+	// check if a new target standby is needed
+	isNewTargetStandby, newTargetStandby := checkForNewTargetStandby(&gsb, &cfm)
+
+	// update the target standby if needed
+	if isNewTargetStandby {
+		gsb.Spec.StandingBy = newTargetStandby
+		r.Update(ctx, &gsb)
+		r.PrevTime = currTime
+	} else {
+		targetStandby := gsb.Spec.StandingBy
+		targetStandbyFloor, _ := strconv.Atoi(cfm.Data["TargetStandbyFloor"])
+		if targetStandby > targetStandbyFloor {
+			gsb.Spec.StandingBy = ((targetStandby - targetStandbyFloor) / 2) + targetStandbyFloor
+			r.Update(ctx, &gsb)
+			r.PrevTime = currTime
 		}
 	}
 
@@ -101,7 +134,8 @@ func (r *DynamicStandbyReconciler) createConfigMap(ctx context.Context, gsb *mps
 			},
 		},
 		Data: map[string]string{
-			"BuildID": gsb.Spec.BuildID,
+			"BuildID":            gsb.Spec.BuildID,
+			"TargetStandbyFloor": strconv.Itoa(gsb.Spec.StandingBy),
 		},
 	}
 
@@ -110,4 +144,32 @@ func (r *DynamicStandbyReconciler) createConfigMap(ctx context.Context, gsb *mps
 	}
 
 	return &cfm, nil
+}
+
+func checkForNewTargetStandby(gsb *mpsv1alpha1.GameServerBuild, cfm *corev1.ConfigMap) (bool, int) {
+	activeServers := gsb.Status.CurrentActive
+	activeStandby := gsb.Status.CurrentStandingBy
+	targetStandby := gsb.Spec.StandingBy
+	targetStandbyFloor, _ := strconv.Atoi(cfm.Data["TargetStandbyFloor"])
+
+	dynamicStandbyActive := false
+
+	if activeServers > targetStandby && (float64(activeStandby/targetStandbyFloor) < 0.5) {
+		targetStandby = int(1.5 * float64(targetStandby))
+		dynamicStandbyActive = true
+	}
+	if activeServers > targetStandby && (float64(activeStandby/targetStandbyFloor) < 0.25) {
+		targetStandby = 3 * targetStandby
+		dynamicStandbyActive = true
+	}
+	if activeServers > targetStandby && (float64(activeStandby/targetStandbyFloor) < 0.005) {
+		targetStandby = 4 * targetStandby
+		dynamicStandbyActive = true
+	}
+
+	if dynamicStandbyActive {
+		return true, targetStandby
+	}
+
+	return false, 0
 }
