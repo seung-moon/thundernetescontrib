@@ -68,6 +68,13 @@ func (r *DynamicStandbyReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if isNewTargetStandby {
 		gsb.Spec.StandingBy = newTargetStandby
 		r.Update(ctx, &gsb)
+	} else {
+		targetStandby := gsb.Spec.StandingBy
+		targetStandbyFloor, _ := strconv.Atoi(cfm.Data["TargetStandbyFloor"])
+		if targetStandby > targetStandbyFloor {
+			gsb.Spec.StandingBy = ((targetStandby - targetStandbyFloor) / 2) + targetStandbyFloor
+			r.Update(ctx, &gsb)
+		}
 	}
 
 	// TODO: add cooldown period between consecutive updates
